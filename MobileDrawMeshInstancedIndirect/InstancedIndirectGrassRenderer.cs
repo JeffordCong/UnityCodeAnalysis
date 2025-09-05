@@ -11,7 +11,7 @@ using UnityEngine.Profiling;
 public class InstancedIndirectGrassRenderer : MonoBehaviour
 {
     [Header("Settings")]
-    public float drawDistance = 125;//this setting will affect performance a lot!
+    public float drawDistance = 125;
     public Material instanceMaterial;
 
     [Header("Internal")]
@@ -20,7 +20,7 @@ public class InstancedIndirectGrassRenderer : MonoBehaviour
     [NonSerialized]
     public List<Vector3> allGrassPos = new List<Vector3>();//user should update this list using C#
     //=====================================================
-    [HideInInspector]   
+    [HideInInspector]
     public static InstancedIndirectGrassRenderer instance;// global ref to this script
 
     private int cellCountX = -1;
@@ -56,32 +56,46 @@ public class InstancedIndirectGrassRenderer : MonoBehaviour
         // recreate all buffers if needed
         UpdateAllInstanceTransformBufferIfNeeded();
 
-        //=====================================================================================================
-        // rough quick big cell frustum culling in CPU first
-        //=====================================================================================================
-        visibleCellIDList.Clear();//fill in this cell ID list using CPU frustum culling first
+        // 首先在 CPU 中进行粗略、快速的大型单元格视锥体剔除
+        //  首先使用 CPU 视锥体剔除来填充此单元格 ID 列表
+
+        visibleCellIDList.Clear();
         Camera cam = Camera.main;
 
-        //Do frustum culling using per cell bound
-        //https://docs.unity3d.com/ScriptReference/GeometryUtility.CalculateFrustumPlanes.html
-        //https://docs.unity3d.com/ScriptReference/GeometryUtility.TestPlanesAABB.html
         float cameraOriginalFarPlane = cam.farClipPlane;
-        cam.farClipPlane = drawDistance;//allow drawDistance control    
-        GeometryUtility.CalculateFrustumPlanes(cam, cameraFrustumPlanes);//Ordering: [0] = Left, [1] = Right, [2] = Down, [3] = Up, [4] = Near, [5] = Far
-        cam.farClipPlane = cameraOriginalFarPlane;//revert far plane edit
+        cam.farClipPlane = drawDistance;
+        //Ordering: [0] = Left, [1] = Right, [2] = Down, [3] = Up, [4] = Near, [5] = Far
+        GeometryUtility.CalculateFrustumPlanes(cam, cameraFrustumPlanes);
+        //revert far plane edit
+        cam.farClipPlane = cameraOriginalFarPlane;
 
         //slow loop
         //TODO: (A)replace this forloop by a quadtree test?
         //TODO: (B)convert this forloop to job+burst? (UnityException: TestPlanesAABB can only be called from the main thread.)
+
         Profiler.BeginSample("CPU cell frustum culling (heavy)");
-        
+
+        /* 
+           直接将场景中所有（例如一百万个）草的实例数据全部交给 GPU 去遍历剔除，效率依然很低，尤其是当摄像机只看向一小片区域时。
+           GPU 仍然需要启动大量线程去检查那些明显在摄像机背后或远处的实例。
+           为了解决这个问题，此代码引入了一个常见的空间划分优化：将整个草地渲染区域划分为一个2D网格 (Grid)。
+
+           以下循环的目的：
+           在 CPU 上，只找出摄像机视锥体能看到的网格单元 (Cell)，然后只把这些可见单元格内的草实例数据发送给 GPU 去做下一步的精细剔除。
+        */
         for (int i = 0; i < cellPosWSsList.Length; i++)
         {
-            //create cell bound
-            Vector3 centerPosWS = new Vector3 (i % cellCountX + 0.5f, 0, i / cellCountX + 0.5f);
+            /*
+             计算Cell中心点在世界空间的坐标
+                i % cellCountX：通过取模运算得到单元格的 X 轴索引（列号）
+                i / cellCountX：通过整除运算得到单元格的 Z 轴索引（行号）。
+                + 0.5f：将索引偏移半个单位，以获取单元格的中心点（而非左下角）。
+            */
+            Vector3 centerPosWS = new Vector3(i % cellCountX + 0.5f, 0, i / cellCountX + 0.5f);
+
             centerPosWS.x = Mathf.Lerp(minX, maxX, centerPosWS.x / cellCountX);
             centerPosWS.z = Mathf.Lerp(minZ, maxZ, centerPosWS.z / cellCountZ);
-            Vector3 sizeWS = new Vector3(Mathf.Abs(maxX - minX) / cellCountX,0,Mathf.Abs(maxX - minX) / cellCountX);
+            Vector3 sizeWS = new Vector3(Mathf.Abs(maxX - minX) / cellCountX, 0, Mathf.Abs(maxX - minX) / cellCountX);
             Bounds cellBound = new Bounds(centerPosWS, sizeWS);
 
             if (GeometryUtility.TestPlanesAABB(cameraFrustumPlanes, cellBound))
@@ -91,9 +105,10 @@ public class InstancedIndirectGrassRenderer : MonoBehaviour
         }
         Profiler.EndSample();
 
+
         //=====================================================================================================
-        // then loop though only visible cells, each visible cell dispatch GPU culling job once
-        // at the end compute shader will fill all visible instance into visibleInstancesOnlyPosWSIDBuffer
+        // 然后仅遍历可见单元格，每个可见单元格调度一次 GPU 剔除任务
+        // 最终计算着色器会将所有可见实例填充到 visibleInstancesOnlyPosWSIDBuffer（可见实例仅含世界空间位置与 ID 缓冲区）中
         //=====================================================================================================
         Matrix4x4 v = cam.worldToCameraMatrix;
         Matrix4x4 p = cam.projectionMatrix;
@@ -120,7 +135,7 @@ public class InstancedIndirectGrassRenderer : MonoBehaviour
 
             //============================================================================================
             //batch n dispatchs into 1 dispatch, if memory is continuous in allInstancesPosWSBuffer
-            if(shouldBatchDispatch)
+            if (shouldBatchDispatch)
             {
                 while ((i < visibleCellIDList.Count - 1) && //test this first to avoid out of bound access to visibleCellIDList
                         (visibleCellIDList[i + 1] == visibleCellIDList[i] + 1))
@@ -151,7 +166,7 @@ public class InstancedIndirectGrassRenderer : MonoBehaviour
     private void OnGUI()
     {
         GUI.contentColor = Color.black;
-        GUI.Label(new Rect(200, 0, 400, 60), 
+        GUI.Label(new Rect(200, 0, 400, 60),
             $"After CPU cell frustum culling,\n" +
             $"-Visible cell count = {visibleCellIDList.Count}/{cellCountX * cellCountZ}\n" +
             $"-Real compute dispatch count = {dispatchCount} (saved by batching = {visibleCellIDList.Count - dispatchCount})");
@@ -177,6 +192,10 @@ public class InstancedIndirectGrassRenderer : MonoBehaviour
         instance = null;
     }
 
+    /// <summary>
+    /// 获取 Mesh
+    /// </summary>
+    /// <returns></returns>
     Mesh GetGrassMeshCache()
     {
         if (!cachedGrassMesh)
@@ -210,9 +229,9 @@ public class InstancedIndirectGrassRenderer : MonoBehaviour
             argsBuffer != null &&
             allInstancesPosWSBuffer != null &&
             visibleInstancesOnlyPosWSIDBuffer != null)
-            {
-                return;
-            }
+        {
+            return;
+        }
 
         /////////////////////////////////////////////////////////////////////////////////////////////////////
         /////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -224,7 +243,7 @@ public class InstancedIndirectGrassRenderer : MonoBehaviour
         ///////////////////////////
         if (allInstancesPosWSBuffer != null)
             allInstancesPosWSBuffer.Release();
-        allInstancesPosWSBuffer = new ComputeBuffer(allGrassPos.Count, sizeof(float)*3); //float3 posWS only, per grass
+        allInstancesPosWSBuffer = new ComputeBuffer(allGrassPos.Count, sizeof(float) * 3); //float3 posWS only, per grass
 
         if (visibleInstancesOnlyPosWSIDBuffer != null)
             visibleInstancesOnlyPosWSIDBuffer.Release();
@@ -246,7 +265,7 @@ public class InstancedIndirectGrassRenderer : MonoBehaviour
 
         //decide cellCountX,Z here using min max
         //each cell is cellSizeX x cellSizeZ
-        cellCountX = Mathf.CeilToInt((maxX - minX) / cellSizeX); 
+        cellCountX = Mathf.CeilToInt((maxX - minX) / cellSizeX);
         cellCountZ = Mathf.CeilToInt((maxZ - minZ) / cellSizeZ);
 
         //init per cell posWS list memory
@@ -262,8 +281,8 @@ public class InstancedIndirectGrassRenderer : MonoBehaviour
             Vector3 pos = allGrassPos[i];
 
             //find cellID
-            int xID = Mathf.Min(cellCountX-1,Mathf.FloorToInt(Mathf.InverseLerp(minX, maxX, pos.x) * cellCountX)); //use min to force within 0~[cellCountX-1]  
-            int zID = Mathf.Min(cellCountZ-1,Mathf.FloorToInt(Mathf.InverseLerp(minZ, maxZ, pos.z) * cellCountZ)); //use min to force within 0~[cellCountZ-1]
+            int xID = Mathf.Min(cellCountX - 1, Mathf.FloorToInt(Mathf.InverseLerp(minX, maxX, pos.x) * cellCountX)); //use min to force within 0~[cellCountX-1]  
+            int zID = Mathf.Min(cellCountZ - 1, Mathf.FloorToInt(Mathf.InverseLerp(minZ, maxZ, pos.z) * cellCountZ)); //use min to force within 0~[cellCountZ-1]
 
             cellPosWSsList[xID + zID * cellCountX].Add(pos);
         }
@@ -284,15 +303,16 @@ public class InstancedIndirectGrassRenderer : MonoBehaviour
         instanceMaterial.SetBuffer("_AllInstancesTransformBuffer", allInstancesPosWSBuffer);
         instanceMaterial.SetBuffer("_VisibleInstanceOnlyTransformIDBuffer", visibleInstancesOnlyPosWSIDBuffer);
 
-        ///////////////////////////
-        // Indirect args buffer
-        ///////////////////////////
+
         if (argsBuffer != null)
             argsBuffer.Release();
+
         uint[] args = new uint[5] { 0, 0, 0, 0, 0 };
         argsBuffer = new ComputeBuffer(1, args.Length * sizeof(uint), ComputeBufferType.IndirectArguments);
 
+        // 告诉GPU绘制一个草地实例需要读取多少个顶点索引。
         args[0] = (uint)GetGrassMeshCache().GetIndexCount(0);
+        //  allGrassPos.Count没有任何运行时意义。它只是一个初始化占位符。
         args[1] = (uint)allGrassPos.Count;
         args[2] = (uint)GetGrassMeshCache().GetIndexStart(0);
         args[3] = (uint)GetGrassMeshCache().GetBaseVertex(0);
@@ -300,10 +320,7 @@ public class InstancedIndirectGrassRenderer : MonoBehaviour
 
         argsBuffer.SetData(args);
 
-        ///////////////////////////
-        // Update Cache
-        ///////////////////////////
-        //update cache to prevent future no-op buffer update, which waste performance
+        // 更新缓存，以防止未来出现无操作（no-op）的缓冲区更新，此类更新会浪费性能
         instanceCountCache = allGrassPos.Count;
 
 
