@@ -1,0 +1,20 @@
+{
+    "name": "GPUAnimation",
+    "rootNamespace": "",
+    "references": [
+        "GUID:173464ddf4cdb6640a4dfa8a9281ad69",
+        "GUID:68765d262e2128e4ab49c983f3411946",
+        "GUID:72d1fea872bd7a449bf3818f2b0a6708",
+        "GUID:dd9493fbefb52fd48926bb1291844728",
+        "GUID:0c06a9c96253b2c4e94d65ecc349b306"
+    ],
+    "includePlatforms": [],
+    "excludePlatforms": [],
+    "allowUnsafeCode": true,
+    "overrideReferences": false,
+    "precompiledReferences": [],
+    "autoReferenced": true,
+    "defineConstraints": [],
+    "versionDefines": [],
+    "noEngineReferences": false
+}
