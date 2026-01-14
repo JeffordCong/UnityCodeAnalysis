@@ -1,0 +1,41 @@
+@echo off
+setlocal
+title ADB Tool Basic
+cd /d "%~dp0"
+
+:Menu
+cls
+echo ========================================
+echo        ADB Connection Tool
+echo ========================================
+echo.
+
+:: Check Environment 
+where adb >nul 2>nul
+if %errorlevel% neq 0 (
+    echo [ERROR] adb not found in PATH.
+    pause
+    exit /b 1
+)
+
+:: Query and Output 
+echo [*] Listing devices...
+adb devices
+echo.
+
+:: Actions [cite: 8, 9]
+echo [R] Refresh  [K] Kill Server  [E] Exit
+choice /C RKE /N /M "Select action: "
+
+if errorlevel 3 goto End
+if errorlevel 2 goto Restart
+if errorlevel 1 goto Menu
+
+:Restart
+echo [*] Resetting ADB...
+adb kill-server
+adb start-server
+goto Menu
+
+:End
+endlocal

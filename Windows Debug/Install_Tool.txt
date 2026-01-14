@@ -1,0 +1,59 @@
+@echo off
+setlocal
+title Unity APK Deployment Tool
+
+:: --- 模式选择 ---
+echo ==========================================
+echo [1] Auto-Install LATEST (Time Sorted)
+echo [2] Manual Input Filename
+echo ==========================================
+set /p choice=">> Select Mode (1/2): "
+
+if "%choice%"=="1" goto :FindLatest
+if "%choice%"=="2" goto :ManualInput
+echo [Error] Invalid Selection. & pause & exit
+
+:: --- 模式1: 自动查找最新 ---
+:FindLatest
+echo.
+echo [Scanning for latest APK...]
+:: /b:纯文件名 /a-d:仅文件 /o-d:按时间倒序(最新的在最前)
+for /f "delims=" %%i in ('dir *.apk /b /a-d /o-d') do (
+    set "TARGET_APK=%%i"
+    goto :ExecuteInstall
+)
+echo [Error] No APK found in current directory.
+pause & exit
+
+:: --- 模式2: 手动输入 ---
+:ManualInput
+echo.
+echo [FileList]:
+dir *.apk /b /o-d
+echo.
+set /p TARGET_APK=">> Enter filename (e.g. 12.17.13.apk): "
+if not exist "%TARGET_APK%" (
+    echo [Error] File '%TARGET_APK%' not found.
+    pause & exit
+)
+
+:: --- 执行安装核心段 ---
+:ExecuteInstall
+echo.
+echo ---------------------------------------------
+echo Target: %TARGET_APK%
+echo Action: adb install -r -d -t -g
+echo ---------------------------------------------
+
+adb install -r -d -t -g "%TARGET_APK%"
+
+if %ERRORLEVEL% EQU 0 (
+    color 0A
+    echo.
+    echo [SUCCESS] Installed Successfully.
+) else (
+    color 0C
+    echo.
+    echo [FAILED] Error Code: %ERRORLEVEL%
+)
+pause
